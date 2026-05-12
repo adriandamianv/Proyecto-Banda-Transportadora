@@ -3,7 +3,7 @@ const { Pool } = require('pg');
 const app = express();
 
 const pool = new Pool({
-  connectionString: 'TU_DATABASE_URL_AQUI', // Pega aquí tu URL de Render
+  connectionString: 'https://proyecto-banda-transportadora.onrender.com/save_data', // Pega aquí tu URL de Render
   ssl: { rejectUnauthorized: false }
 });
 
