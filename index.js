@@ -2,26 +2,30 @@ const express = require('express');
 const { Pool } = require('pg');
 const app = express();
 
+// Configuración de la conexión
 const pool = new Pool({
-  connectionString: 'https://proyecto-banda-transportadora.onrender.com/save_data', // Pega aquí tu URL de Render
+  connectionString: 'postgresql://db_banda_bvov_user:ulbzic1SYMcuwBNP8QzvEeOt3yCn38Dg@dpg-d81pe957vvec738ja0tg-a/db_banda_bvov', 
   ssl: { rejectUnauthorized: false }
 });
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// Crear la tabla automáticamente si no existe
-pool.query(`
-  CREATE TABLE IF NOT EXISTS registros (
-    id SERIAL PRIMARY KEY,
-    uid TEXT,
-    material TEXT,
-    peso TEXT,
-    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-  )
-`);
+// Crear tabla si no existe
+const initDb = async () => {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS registros (
+      id SERIAL PRIMARY KEY,
+      uid TEXT,
+      material TEXT,
+      peso TEXT,
+      fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+};
+initDb();
 
-// Ruta para guardar datos (lo que llama el ESP32)
+// Recibir datos del ESP32
 app.post('/save_data', async (req, res) => {
   const { uid, material, weight_kg } = req.body;
   try {
@@ -29,49 +33,34 @@ app.post('/save_data', async (req, res) => {
       'INSERT INTO registros (uid, material, peso) VALUES ($1, $2, $3)',
       [uid, material, weight_kg]
     );
-    console.log("Dato guardado en BD:", uid);
-    res.status(200).send('OK');
+    res.status(200).send('Dato guardado');
   } catch (err) {
-    console.error(err);
-    res.status(500).send('Error');
+    res.status(500).send('Error en BD');
   }
 });
 
-// Ruta para VER los datos en una tabla bonita
+// Ver la base de datos en la página principal
 app.get('/', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM registros ORDER BY fecha DESC');
-    let html = `
-      <html>
-        <head>
-          <title>Registros Banda Transportadora</title>
-          <style>
-            body { font-family: Arial; text-align: center; background: #f4f4f4; }
-            table { width: 80%; margin: auto; border-collapse: collapse; background: white; }
-            th, td { padding: 10px; border: 1px solid #ddd; }
-            th { background: #6200ee; color: white; }
-          </style>
-        </head>
-        <body>
-          <h1>Historial de Clasificación - UG</h1>
-          <table>
-            <tr><th>Fecha</th><th>Usuario (UID)</th><th>Material</th><th>Peso (kg)</th></tr>`;
-    
-    result.rows.forEach(row => {
-      html += `<tr>
-        <td>${new Date(row.fecha).toLocaleString()}</td>
-        <td>${row.uid}</td>
-        <td>${row.material}</td>
-        <td>${row.peso}</td>
-      </tr>`;
-    });
+    let filas = result.rows.map(r => 
+      `<tr><td>${new Date(r.fecha).toLocaleString()}</td><td>${r.uid}</td><td>${r.material}</td><td>${r.peso} kg</td></tr>`
+    ).join('');
 
-    html += `</table></body></html>`;
-    res.send(html);
+    res.send(`
+      <html>
+        <body style="font-family:sans-serif; text-align:center;">
+          <h1>Panel de Control - Banda UG</h1>
+          <table border="1" style="margin:auto; width:80%;">
+            <tr style="background:#ddd;"><th>Fecha</th><th>Tarjeta (UID)</th><th>Material</th><th>Peso</th></tr>
+            ${filas}
+          </table>
+        </body>
+      </html>
+    `);
   } catch (err) {
-    res.send("Error al cargar datos");
+    res.send("Error al leer la base de datos");
   }
 });
 
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log('Servidor en puerto ' + PORT));
+app.listen(process.env.PORT || 10000);
