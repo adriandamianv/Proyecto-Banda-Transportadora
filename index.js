@@ -3,7 +3,6 @@ const { Pool } = require('pg');
 const app = express();
 
 // --- CONFIGURACIÓN DE LA BASE DE DATOS ---
-// RECUERDA: Pega tu dirección real entre las comillas
 const pool = new Pool({
   connectionString: 'postgresql://db_banda_bvov_user:ulbzic1SYMcuwBNP8QzvEeOt3yCn38Dg@dpg-d81pe957vvec738ja0tg-a/db_banda_bvov', 
   ssl: { rejectUnauthorized: false }
@@ -12,7 +11,7 @@ const pool = new Pool({
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// Inicialización de la tabla en PostgreSQL
+// Inicialización de la tabla
 const initDb = async () => {
   try {
     await pool.query(`
@@ -24,14 +23,13 @@ const initDb = async () => {
         fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    console.log("Conexión a BD exitosa y tabla lista.");
   } catch (err) {
-    console.error("Error al conectar con la BD:", err);
+    console.error(err);
   }
 };
 initDb();
 
-// --- RUTA PARA RECIBIR DATOS DEL ESP32 ---
+// --- RUTA PARA RECIBIR DATOS ---
 app.post('/save_data', async (req, res) => {
   const { uid, material, weight_kg } = req.body;
   try {
@@ -39,38 +37,34 @@ app.post('/save_data', async (req, res) => {
       'INSERT INTO registros (uid, material, peso) VALUES ($1, $2, $3)',
       [uid, material, weight_kg]
     );
-    console.log(`Dato Recibido: ${uid} | ${material} | ${weight_kg}kg`);
-    res.status(200).send('Dato guardado correctamente');
+    res.status(200).send('OK');
   } catch (err) {
-    console.error("Error al insertar dato:", err);
-    res.status(500).send('Error interno del servidor');
+    res.status(500).send('Error');
   }
 });
 
-// --- RUTA PARA VISUALIZAR LA TABLA WEB ---
+// --- RUTA DE LA APP (VISTA MÓVIL) ---
 app.get('/', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM registros ORDER BY fecha DESC');
     
-    let filas = result.rows.map(r => {
-      const fechaLocal = new Date(r.fecha).toLocaleString('es-EC', {
-        timeZone: 'America/Guayaquil',
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: true
+    let tarjetas = result.rows.map(r => {
+      const materialClass = r.material.toLowerCase();
+      const fecha = new Date(r.fecha).toLocaleString('es-EC', { 
+        timeZone: 'America/Guayaquil', 
+        hour12: true,
+        day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
       });
-
+      
       return `
-        <tr>
-          <td style="padding:12px; border:1px solid #ddd;">${fechaLocal}</td>
-          <td style="padding:12px; border:1px solid #ddd; font-family:monospace;">${r.uid}</td>
-          <td style="padding:12px; border:1px solid #ddd;">${r.material}</td>
-          <td style="padding:12px; border:1px solid #ddd; font-weight:bold;">${r.peso} kg</td>
-        </tr>
+        <div class="card">
+          <div class="info">
+            <div class="date">${fecha}</div>
+            <div class="uid">ID: ${r.uid}</div>
+            <span class="tag ${materialClass}">${r.material}</span>
+          </div>
+          <div class="weight">${r.peso} g</div>
+        </div>
       `;
     }).join('');
 
@@ -79,46 +73,39 @@ app.get('/', async (req, res) => {
       <html lang="es">
       <head>
         <meta charset="UTF-8">
-        <title>Panel de Control - Banda UG</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>App Banda UG</title>
+        <meta http-equiv="refresh" content="10">
         <style>
-          body { font-family: sans-serif; margin: 0; padding: 20px; background-color: #f0f2f5; }
-          .container { max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
-          h1 { color: #004a99; text-align: center; }
-          table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-          th { background-color: #004a99; color: white; padding: 15px; text-align: left; }
-          td { padding: 12px; border: 1px solid #ddd; }
-          tr:nth-child(even) { background-color: #f8f9fa; }
+          body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; background: #f0f2f5; color: #333; }
+          .header { background: #004a99; color: white; padding: 20px; text-align: center; position: sticky; top: 0; z-index: 100; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+          .container { max-width: 500px; margin: auto; padding-bottom: 20px; }
+          .card { background: white; margin: 12px; padding: 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+          .date { font-weight: bold; color: #004a99; font-size: 0.9em; }
+          .uid { color: #888; font-size: 0.8em; margin: 4px 0; font-family: monospace; }
+          .weight { font-size: 1.4em; font-weight: bold; color: #2e7d32; }
+          .tag { padding: 4px 10px; border-radius: 20px; font-size: 0.75em; font-weight: bold; color: white; text-transform: uppercase; }
+          .carton { background: #8d6e63; }
+          .papel { background: #1976d2; }
+          .metal { background: #607d8b; }
+          .refresh-msg { font-size: 0.7em; opacity: 0.8; margin-top: 5px; }
         </style>
       </head>
       <body>
+        <div class="header">
+          <div style="font-size: 1.2em; font-weight: bold;">Reciclaje Telemática UG</div>
+          <div class="refresh-msg">Se actualiza automáticamente cada 10s</div>
+        </div>
         <div class="container">
-          <h1>Panel de Control - Clasificación de Residuos</h1>
-          <h3 style="text-align:center; color: #666;">Universidad de Guayaquil - Telemática</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Fecha y Hora (Ecuador)</th>
-                <th>ID Tarjeta (UID)</th>
-                <th>Material</th>
-                <th>Peso Neto</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${filas || '<tr><td colspan="4" style="text-align:center;">No hay registros.</td></tr>'}
-            </tbody>
-          </table>
+          ${tarjetas || '<p style="text-align:center; margin-top:20px;">Esperando datos...</p>'}
         </div>
       </body>
       </html>
     `);
   } catch (err) {
-    console.error("Error al cargar la página:", err);
-    res.send("<h1>Error al conectar con la base de datos</h1>");
+    res.send("Error al conectar con la base de datos.");
   }
 });
 
-// Configuración del puerto
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`Servidor iniciado en el puerto ${PORT}`);
-});
+app.listen(PORT, () => console.log('Servidor listo'));
