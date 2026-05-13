@@ -2,75 +2,54 @@ const express = require('express');
 const { Pool } = require('pg');
 const app = express();
 
-// --- CONFIGURACIÓN DE LA BASE DE DATOS ---
 const pool = new Pool({
-  connectionString: 'postgresql://db_banda_bvov_user:ulbzic1SYMcuwBNP8QzvEeOt3yCn38Dg@dpg-d81pe957vvec738ja0tg-a/db_banda_bvov', 
+  connectionString: 'postgresql://db_banda_bvov_user:ulbzic1SYMcuwBNP8QzvEeOt3yCn38Dg@dpg-d81pe957vvec738ja0tg-a/db_banda_bvov',
   ssl: { rejectUnauthorized: false }
 });
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// Inicialización de la tabla
-const initDb = async () => {
+// --- RUTA PARA EXPORTAR CSV ---
+app.get('/exportar', async (req, res) => {
   try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS registros (
-        id SERIAL PRIMARY KEY,
-        uid TEXT,
-        material TEXT,
-        peso TEXT,
-        fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-    console.log("Base de datos conectada con éxito.");
-  } catch (err) {
-    console.error("Error BD:", err);
-  }
-};
-initDb();
+    const result = await pool.query('SELECT * FROM registros ORDER BY fecha DESC');
+    const campos = ['id', 'uid', 'material', 'peso', 'fecha'];
+    let csv = campos.join(',') + '\n';
+    
+    result.rows.forEach(row => {
+      csv += `${row.id},${row.uid},${row.material},${row.peso},"${row.fecha}"\n`;
+    });
 
-// --- RUTA PARA EL ESP32 ---
-app.post('/save_data', async (req, res) => {
-  const { uid, material, weight_kg } = req.body;
-  try {
-    await pool.query(
-      'INSERT INTO registros (uid, material, peso) VALUES ($1, $2, $3)',
-      [uid, material, weight_kg]
-    );
-    res.status(200).send('OK');
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename=reporte_reciclaje_UG.csv');
+    res.status(200).send(csv);
   } catch (err) {
-    res.status(500).send('Error');
+    res.status(500).send("Error al exportar");
   }
 });
 
-// --- RUTA PRINCIPAL RESPONSIVE ---
 app.get('/', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM registros ORDER BY fecha DESC');
     
-    // Conteo para estadísticas
-    const stats = { carton: 0, papel: 0, metal: 0 };
+    const stats = { carton: 0, papel: 0, metal: 0, totalPeso: 0 };
     result.rows.forEach(r => {
       const mat = r.material.toLowerCase();
       if(stats.hasOwnProperty(mat)) stats[mat]++;
+      stats.totalPeso += parseFloat(r.peso || 0);
     });
 
-    // Construcción de tarjetas
     let tarjetas = result.rows.map(r => {
       const matClass = r.material.toLowerCase();
-      const fechaEC = new Date(r.fecha).toLocaleString('es-EC', { 
-        timeZone: 'America/Guayaquil', hour12: true,
-        day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
-      });
       return `
         <div class="card" data-id="${r.id}">
           <div class="info">
-            <div class="date">${fechaEC}</div>
-            <div class="uid">ID: ${r.uid}</div>
+            <div class="date">${new Date(r.fecha).toLocaleTimeString()}</div>
+            <div class="uid">UID: ${r.uid}</div>
             <span class="tag ${matClass}">${r.material}</span>
           </div>
-          <div class="weight">${r.peso} g</div>
+          <div class="weight">${r.peso}g</div>
         </div>`;
     }).join('');
 
@@ -80,147 +59,121 @@ app.get('/', async (req, res) => {
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Reciclaje UG</title>
+        <title>Dashboard Reciclaje UG</title>
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
         <style>
+          :root {
+            --bg: #121212;
+            --card-bg: #1e1e1e;
+            --text: #ffffff;
+            --accent: #00d4ff;
+            --header-bg: #1a1a1a;
+          }
           body { 
-            font-family: 'Segoe UI', sans-serif; 
-            margin: 0; 
-            background: #f0f2f5; 
-            display: flex; 
-            flex-direction: column; 
-            align-items: center; 
+            font-family: 'Inter', sans-serif; 
+            margin: 0; background: var(--bg); color: var(--text);
+            display: flex; flex-direction: column; align-items: center; 
           }
-
-          /* Header */
           .header { 
-            background: #004a99; 
-            color: white; 
-            padding: 15px; 
-            display: flex; 
-            align-items: center; 
-            position: sticky; 
-            top: 0; 
-            z-index: 100; 
-            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-            width: 100%;
-            box-sizing: border-box;
+            background: var(--header-bg); width: 100%; padding: 15px; 
+            display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 2px solid var(--accent); box-sizing: border-box;
           }
-          .menu-btn { font-size: 24px; margin-right: 20px; cursor: pointer; }
-
-          /* Contenedor que evita que se estire en PC */
-          .main-container {
-            width: 95%;
-            max-width: 500px;
-            margin: 20px auto;
-          }
-
-          .section { display: none; width: 100%; }
-          .active { display: block; }
+          .main-container { width: 95%; max-width: 550px; margin-top: 20px; }
           
-          /* Tarjetas */
+          /* Estilo Power BI KPI */
+          .kpi-container { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px; }
+          .kpi-card { 
+            background: var(--card-bg); padding: 15px; border-radius: 12px; 
+            text-align: center; border-left: 4px solid var(--accent);
+          }
+          .kpi-value { font-size: 1.5em; font-weight: bold; color: var(--accent); }
+          .kpi-label { font-size: 0.8em; opacity: 0.7; }
+
           .card { 
-            background: white; 
-            margin-bottom: 12px; 
-            padding: 20px; 
-            border-radius: 15px; 
-            display: flex; 
-            justify-content: space-between; 
-            align-items: center; 
-            box-shadow: 0 4px 10px rgba(0,0,0,0.06);
+            background: var(--card-bg); margin-bottom: 10px; padding: 15px; 
+            border-radius: 12px; display: flex; justify-content: space-between; align-items: center;
           }
-          .date { font-weight: bold; color: #004a99; font-size: 0.9em; }
-          .uid { color: #888; font-size: 0.75em; font-family: monospace; }
-          .tag { 
-            padding: 4px 10px; border-radius: 20px; font-size: 0.7em; 
-            font-weight: bold; color: white; text-transform: uppercase; 
-            display: inline-block; margin-top: 5px;
+          .tag { padding: 4px 10px; border-radius: 15px; font-size: 0.7em; font-weight: bold; }
+          .carton { background: #5d4037; } .papel { background: #1565c0; } .metal { background: #455a64; }
+          
+          .btn-export {
+            background: var(--accent); color: #000; padding: 10px 20px; 
+            border-radius: 8px; text-decoration: none; font-weight: bold;
+            display: block; text-align: center; margin: 20px 0;
           }
-          .carton { background: #8d6e63; } .papel { background: #1976d2; } .metal { background: #607d8b; }
-          .weight { font-size: 1.4em; font-weight: bold; color: #2e7d32; }
-
-          /* Menú Lateral */
-          .sidenav { height: 100%; width: 0; position: fixed; z-index: 200; top: 0; left: 0; background-color: #111; overflow-x: hidden; transition: 0.5s; padding-top: 60px; }
-          .sidenav a { padding: 15px; text-decoration: none; font-size: 20px; color: #818181; display: block; }
-          .sidenav .closebtn { position: absolute; top: 0; right: 25px; font-size: 36px; }
-
-          canvas { background: white; border-radius: 15px; padding: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.06); width: 100% !important; }
+          .section { display: none; } .active { display: block; }
+          canvas { background: #1e1e1e; border-radius: 12px; padding: 15px; }
         </style>
       </head>
       <body>
-
-        <div id="mySidenav" class="sidenav">
-          <a href="javascript:void(0)" class="closebtn" onclick="closeNav()">&times;</a>
-          <a href="#" onclick="showSection('historial')">📊 Historial</a>
-          <a href="#" onclick="showSection('stats')">📈 Estadísticas</a>
-        </div>
-
         <div class="header">
-          <span class="menu-btn" onclick="openNav()">&#9776;</span>
-          <div>
-            <div style="font-size: 1.2em; font-weight: bold;">¡Bienvenido!</div>
-            <div style="font-size: 0.75em; opacity: 0.8;">Reciclaje Telemática UG</div>
-          </div>
+          <div onclick="location.reload()" style="cursor:pointer">📊 Dashboard Pro</div>
+          <div style="font-size: 0.8em; color: var(--accent);">Modo Noche Activo</div>
         </div>
 
         <div class="main-container">
-          <div id="historial" class="section active">
-            <h2 style="color:#004a99; text-align: center;">Registros Recientes</h2>
-            <div id="lista-tarjetas">${tarjetas || '<p style="text-align:center;">Esperando datos...</p>'}</div>
+          <div class="kpi-container">
+            <div class="kpi-card">
+              <div class="kpi-value">${result.rows.length}</div>
+              <div class="kpi-label">Objetos Totales</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-value">${(stats.totalPeso/1000).toFixed(2)}kg</div>
+              <div class="kpi-label">Peso Total</div>
+            </div>
           </div>
 
-          <div id="stats" class="section">
-            <h2 style="color:#004a99; text-align: center;">Resumen de Materiales</h2>
-            <canvas id="myChart"></canvas>
+          <canvas id="myChart" style="margin-bottom: 20px;"></canvas>
+
+          <a href="/exportar" class="btn-export">📥 Descargar Reporte CSV</a>
+
+          <div id="historial" class="section active">
+            <h3 style="border-left: 3px solid var(--accent); padding-left: 10px;">Logs en Tiempo Real</h3>
+            <div>${tarjetas}</div>
           </div>
         </div>
 
         <script>
-          function openNav() { document.getElementById("mySidenav").style.width = "250px"; }
-          function closeNav() { document.getElementById("mySidenav").style.width = "0"; }
-          function showSection(id) {
-            document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-            document.getElementById(id).classList.add('active');
-            closeNav();
-          }
-
-          // Gráfica
           const ctx = document.getElementById('myChart').getContext('2d');
           new Chart(ctx, {
-            type: 'doughnut',
+            type: 'bar',
             data: {
               labels: ['Cartón', 'Papel', 'Metal'],
               datasets: [{
+                label: 'Cantidad por Material',
                 data: [${stats.carton}, ${stats.papel}, ${stats.metal}],
                 backgroundColor: ['#8d6e63', '#1976d2', '#607d8b']
               }]
+            },
+            options: { 
+                scales: { 
+                    y: { beginAtZero: true, grid: { color: '#333' }, ticks: { color: '#fff' } },
+                    x: { ticks: { color: '#fff' } }
+                },
+                plugins: { legend: { display: false } }
             }
           });
 
-          // Notificaciones Kodular
+          // Notificación Kodular
           let ultimoID = localStorage.getItem('ultimoID') || 0;
           setInterval(() => {
-            const primeraTarjeta = document.querySelector('.card');
-            if (primeraTarjeta) {
-              const idActual = primeraTarjeta.getAttribute('data-id');
-              if (ultimoID != 0 && idActual > ultimoID) {
+            const pc = document.querySelector('.card');
+            if (pc) {
+              const id = pc.getAttribute('data-id');
+              if (ultimoID != 0 && id > ultimoID) {
                 if (window.AppInventor) window.AppInventor.setWebViewString("NUEVO_DATO");
               }
-              ultimoID = idActual;
+              ultimoID = id;
               localStorage.setItem('ultimoID', ultimoID);
             }
           }, 5000);
-
-          // Recarga automática para ver nuevos datos
-          setTimeout(() => { location.reload(); }, 20000);
         </script>
       </body>
       </html>
     `);
-  } catch (err) {
-    res.status(500).send("Error");
-  }
+  } catch (err) { res.status(500).send("Error"); }
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log('Servidor activo en puerto ' + PORT));
+app.listen(PORT, () => console.log('Dashboard Dark activo'));
