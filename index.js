@@ -4,7 +4,7 @@ const app = express();
 
 // --- CONFIGURACIÓN DE LA BASE DE DATOS ---
 const pool = new Pool({
-  connectionString: 'TU_INTERNAL_DATABASE_URL_AQUI', 
+  connectionString: 'postgresql://db_banda_bvov_user:ulbzic1SYMcuwBNP8QzvEeOt3yCn38Dg@dpg-d81pe957vvec738ja0tg-a/db_banda_bvov', 
   ssl: { rejectUnauthorized: false }
 });
 
